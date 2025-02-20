@@ -11,6 +11,7 @@
 #include "board/misc.h" // timer_read_time
 #include "basecmd.h" // oid_alloc
 #include "command.h" // DECL_COMMAND
+#include "sched.h" // sched_shutdown
 #include "i2ccmds.h" // i2cdev_set_software_bus
 
 struct i2c_software {
@@ -86,7 +87,7 @@ i2c_software_read_ack(struct i2c_software *is)
     return nack;
 }
 
-static int
+static void
 i2c_software_send_byte(struct i2c_software *is, uint8_t b)
 {
     for (uint_fast8_t i = 0; i < 8; i++) {
@@ -103,10 +104,8 @@ i2c_software_send_byte(struct i2c_software *is, uint8_t b)
     }
 
     if (i2c_software_read_ack(is)) {
-        return I2C_BUS_NACK;
+        shutdown("soft_i2c NACK");
     }
-
-    return I2C_BUS_SUCCESS;
 }
 
 static uint8_t
@@ -127,10 +126,9 @@ i2c_software_read_byte(struct i2c_software *is, uint8_t remaining)
     return b;
 }
 
-static int
+static void
 i2c_software_start(struct i2c_software *is, uint8_t addr)
 {
-    int ret;
     i2c_delay(is->ticks);
     gpio_in_reset(is->sda_in, 1);
     gpio_in_reset(is->scl_in, 1);
@@ -139,10 +137,7 @@ i2c_software_start(struct i2c_software *is, uint8_t addr)
     i2c_delay(is->ticks);
     gpio_out_reset(is->scl_out, 0);
 
-    ret = i2c_software_send_byte(is, addr);
-    if (ret == I2C_BUS_NACK)
-        return I2C_BUS_START_NACK;
-    return ret;
+    i2c_software_send_byte(is, addr);
 }
 
 static void
@@ -155,52 +150,32 @@ i2c_software_stop(struct i2c_software *is)
     gpio_in_reset(is->sda_in, 1);
 }
 
-int
+void
 i2c_software_write(struct i2c_software *is, uint8_t write_len, uint8_t *write)
 {
-    int ret = i2c_software_start(is, is->addr);
-    if (ret != I2C_BUS_SUCCESS)
-        goto out;
-
-    while (write_len--) {
-        ret = i2c_software_send_byte(is, *write++);
-        if (ret != I2C_BUS_SUCCESS)
-            break;
-    }
-
-out:
+    i2c_software_start(is, is->addr);
+    while (write_len--)
+        i2c_software_send_byte(is, *write++);
     i2c_software_stop(is);
-    return ret;
 }
 
-int
+void
 i2c_software_read(struct i2c_software *is, uint8_t reg_len, uint8_t *reg
                   , uint8_t read_len, uint8_t *read)
 {
-    int ret;
+    uint8_t addr = is->addr | 0x01;
+
     if (reg_len) {
         // write the register
-        ret = i2c_software_start(is, is->addr);
-        if (ret != I2C_BUS_SUCCESS)
-            goto out;
-        while(reg_len--) {
-            ret = i2c_software_send_byte(is, *reg++);
-            if (ret != I2C_BUS_SUCCESS)
-                goto out;
-        }
-
+        i2c_software_start(is, is->addr);
+        while(reg_len--)
+            i2c_software_send_byte(is, *reg++);
     }
     // start/re-start and read data
-    ret = i2c_software_start(is, is->addr | 0x01);
-    if (ret != I2C_BUS_SUCCESS) {
-        ret = I2C_BUS_START_READ_NACK;
-        goto out;
-    }
+    i2c_software_start(is, addr);
     while(read_len--) {
         *read = i2c_software_read_byte(is, read_len);
         read++;
     }
-out:
     i2c_software_stop(is);
-    return ret;
 }

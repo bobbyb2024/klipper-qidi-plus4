@@ -20,6 +20,29 @@ class SaveVariables:
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('SAVE_VARIABLE', self.cmd_SAVE_VARIABLE,
                                desc=self.cmd_SAVE_VARIABLE_help)
+    def load_variable(self, section, option):
+        varfile = configparser.ConfigParser()
+        try:
+            varfile.read(self.filename)
+            return varfile.get(section, option)
+        except:
+            msg = "Unable to parse existing variable file"
+            logging.exception(msg)
+            raise self.printer.command_error(msg)
+    def save_variable(self, section, option, value):
+        varfile = configparser.ConfigParser()
+        try:
+            varfile.read(self.filename)
+            if not varfile.has_section(section):
+                varfile.add_section(section)
+            varfile.set(section, option, value)
+            with open(self.filename, 'w') as configfile:
+                varfile.write(configfile)
+        except Exception as e:
+            msg = "Unable to save variable"
+            logging.exception(msg)
+            raise self.printer.command_error(msg)
+        self.loadVariables()
     def loadVariables(self):
         allvars = {}
         varfile = configparser.ConfigParser()
@@ -36,8 +59,6 @@ class SaveVariables:
     cmd_SAVE_VARIABLE_help = "Save arbitrary variables to disk"
     def cmd_SAVE_VARIABLE(self, gcmd):
         varname = gcmd.get('VARIABLE')
-        if (varname.lower() != varname):
-            raise gcmd.error("VARIABLE must not contain upper case")
         value = gcmd.get('VALUE')
         try:
             value = ast.literal_eval(value)
